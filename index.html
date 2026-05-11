@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Term Structure Sudo Lab</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #0f172a;
+            color: #f8fafc;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .wrapper {
+            width: 1050px;
+            background: #1e293b;
+            padding: 25px;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            border: 1px solid #334155;
+        }
+
+        canvas {
+            background: #020617;
+            border-radius: 8px;
+            border: 1px solid #334155;
+        }
+
+        .control-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-top: 20px;
+        }
+
+        .col {
+            background: #334155;
+            padding: 12px;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .col-h {
+            font-size: 11px;
+            color: #38bdf8;
+            font-weight: bold;
+            border-bottom: 1px solid #475569;
+            padding-bottom: 5px;
+            text-align: center;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        button {
+            padding: 8px;
+            background: transparent;
+            border: 1px solid #38bdf8;
+            color: #38bdf8;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            transition: 0.2s;
+        }
+
+        button:hover {
+            background: #38bdf8;
+            color: #0f172a;
+        }
+
+        #info {
+            margin-top: 15px;
+            padding: 15px;
+            background: #000;
+            border-left: 4px solid #38bdf8;
+            color: #00ffcc;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            min-height: 50px;
+            line-height: 1.6;
+        }
+
+        .btn-twist {
+            border-color: #fbbf24;
+            color: #fbbf24;
+        }
+
+        .btn-twist:hover {
+            background: #fbbf24;
+            color: #000;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrapper">
+        <h3 style="text-align:center; color:#38bdf8; margin-top:0;">TERM STRUCTURE: 物理驱动边界与混合扭曲实验室</h3>
+        <canvas id="cvs" width="1000" height="380"></canvas>
+        <div id="info">> 核心引擎就绪。正在监测：物理库存、便利收益及远期贴现模型。</div>
+
+        <div class="control-grid">
+            <div class="col">
+                <div class="col-h">物理驱动 (现货约束)</div>
+                <button onclick="runPhy(false)">现货过剩 (全持仓成本支撑)</button>
+                <button onclick="runPhy(true)">现货短缺 (便利收益指数跃迁)</button>
+            </div>
+
+            <div class="col">
+                <div class="col-h">心理驱动 (预期传导)</div>
+                <button onclick="runPsyDown()">预期衰退 ➔ 基差塌陷</button>
+                <button onclick="runPsyUp(1)">预期复苏 ➔ 结构性惜售</button>
+                <button onclick="runPsyUp(2)">预期复苏 ➔ 现实库存锁死</button>
+            </div>
+
+            <div class="col">
+                <div class="col-h">混合扭曲与自动修复</div>
+                <button class="btn-twist" onclick="makeTwist('BC')">S型: 7M峰顶 (供应断层)</button>
+                <button class="btn-twist" onclick="makeTwist('CB')">反S: 7M峰谷 (集中达产)</button>
+                <button class="btn-twist" style="border-color:#00ffcc; color:#00ffcc;" onclick="runRecover()">执行结构修复
+                    (套利定价回归)</button>
+            </div>
+
+            <div class="col">
+                <div class="col-h">金融驱动 (平行位移)</div>
+                <button onclick="runFin(true)">无风险利率上升/通胀</button>
+                <button onclick="runFin(false)">流动性收缩/通缩</button>
+            </div>
+        </div>
+
+        <button onclick="reset()"
+            style="width:100%; margin-top:15px; background:#475569; border:none; color:white; padding:10px; border-radius:4px; cursor:pointer; font-weight:bold;">🔄
+            重置为基础状态 (平衡 Contango)</button>
+    </div>
+
+    <script>
+        var cvs = document.getElementById('cvs');
+        var ctx = cvs.getContext('2d');
+        var info = document.getElementById('info');
+        var initial = [250, 240, 230, 220, 210, 200, 190, 180];
+        var cur = [250, 240, 230, 220, 210, 200, 190, 180], tar = [250, 240, 230, 220, 210, 200, 190, 180];
+        var tags = [], timers = [], currentMode = 'NONE';
+
+        function render() {
+            ctx.clearRect(0, 0, 1000, 380);
+            ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 1;
+            for (var i = 0; i < 10; i++) {
+                ctx.beginPath(); ctx.moveTo(50, 30 + i * 33); ctx.lineTo(950, 30 + i * 33); ctx.stroke();
+            }
+            for (var i = 0; i < 8; i++) cur[i] += (tar[i] - cur[i]) * 0.08;
+            ctx.beginPath(); ctx.lineWidth = 5;
+            ctx.strokeStyle = (cur[0] < cur[7]) ? '#38bdf8' : '#f43f5e';
+            for (var i = 0; i < 8; i++) {
+                var x = 80 + i * 115;
+                if (i === 0) ctx.moveTo(x, cur[i]); else ctx.lineTo(x, cur[i]);
+            }
+            ctx.stroke();
+            tags.forEach(function (t) { ctx.fillStyle = t.c; ctx.font = "bold 11px sans-serif"; ctx.fillText(t.s, t.x, t.y); });
+            for (var i = 0; i < 8; i++) {
+                if (i === 3) ctx.fillStyle = "#fbbf24";
+                else if (i === 0) ctx.fillStyle = "#f43f5e";
+                else ctx.fillStyle = "#fff";
+                ctx.beginPath(); ctx.arc(80 + i * 115, cur[i], i === 3 ? 9 : 5, 0, Math.PI * 2); ctx.fill();
+            }
+            ctx.fillStyle = '#64748b'; var ms = ["现货(SPOT)", "3M", "5M", "7M(极值)", "9M", "11M", "远1", "远2"];
+            for (var i = 0; i < 8; i++) ctx.fillText(ms[i], 55 + i * 115, 360);
+            requestAnimationFrame(render);
+        }
+
+        function clearTimers() { timers.forEach(clearTimeout); timers = []; }
+        function reset() { clearTimers(); tar = [250, 240, 230, 220, 210, 200, 190, 180]; tags = []; currentMode = 'NONE'; info.innerHTML = "> 结构复位。基准模型：Full Carry (全持仓成本) Contango。"; }
+
+        function runPhy(isShortage) {
+            reset();
+            if (isShortage) {
+                tar = [40, 110, 190, 230, 250, 260, 265, 270];
+                tags.push({ s: "便利收益(CY)非线性爆发", x: 90, y: 55, c: "#f43f5e" });
+                info.innerHTML = "【物理短缺】由于库存跌破安全阈值，现货对于生产商的“便利价值”远超持仓成本。此状态下近端无上限。";
+            } else {
+                tar = [340, 310, 280, 250, 220, 195, 185, 180];
+                tags.push({ s: "持仓成本(Carry)边界支撑", x: 120, y: 330, c: "#fbbf24" });
+                info.innerHTML = "【现货过剩】当近远价差 > 仓库租赁费 + 利息，正向套利盘介入，使得 Contango 结构存在物理“底”。";
+            }
+        }
+
+        function runPsyDown() {
+            reset();
+            tar = [250, 240, 230, 225, 235, 250, 270, 290];
+            tags.push({ s: "预期修正: 远端贴水", x: 750, y: 280, c: "#fbbf24" });
+            timers.push(setTimeout(function () {
+                tar = [360, 340, 320, 300, 290, 280, 285, 290];
+                tags.push({ s: "负向反馈: 抛售踩踏", x: 60, y: 360, c: "#f43f5e" });
+                info.innerHTML = "【预期恶化】远端价格先行反映需求崩溃，通过基差路径迫使现货持有人在价格更高时加速出货。";
+            }, 3000));
+        }
+
+        function runPsyUp(type) {
+            reset();
+            tar = [250, 240, 230, 210, 180, 140, 110, 90];
+            tags.push({ s: "远端升水: 乐观博弈", x: 750, y: 80, c: "#38bdf8" });
+            timers.push(setTimeout(function () {
+                if (type === 1) {
+                    tar = [180, 170, 160, 140, 120, 105, 95, 90];
+                    tags.push({ s: "惜售: 基差同步收窄", x: 60, y: 170, c: "#00ffcc" });
+                    info.innerHTML = "【信心修复】远期大涨提升持货意愿，通过负基差引导现货重心整体上移。";
+                } else {
+                    tags.push({ s: "阻碍: 高库存压制", x: 60, y: 280, c: "#fbbf24" });
+                    info.innerHTML = "【传导受阻】虽然预期向好，但近端物理库存尚未去化，导致结构在 3-5M 处出现剧烈断层。";
+                }
+            }, 3000));
+        }
+
+        function makeTwist(mode) {
+            reset();
+            currentMode = mode;
+            if (mode === 'BC') {
+                tar = [150, 120, 80, 40, 100, 180, 260, 320];
+                tags.push({ s: "近端挤仓 (Back)", x: 60, y: 140, c: "#f43f5e" });
+                tags.push({ s: "7M 中期断供点 (博弈极点)", x: 410, y: 30, c: "#fbbf24" });
+                tags.push({ s: "长期过剩预期 (Contango)", x: 750, y: 340, c: "#38bdf8" });
+                info.innerHTML = "【S型扭曲】中期 7M 处于特定收获期前的“真空阶段”，导致结构呈凹性，反映了短期与中期的严重错配。";
+            } else {
+                tar = [200, 240, 300, 350, 280, 200, 120, 60];
+                tags.push({ s: "近端胀库 (Contango)", x: 60, y: 220, c: "#38bdf8" });
+                tags.push({ s: "7M 供应洪峰 (定价波谷)", x: 410, y: 375, c: "#fbbf24" });
+                tags.push({ s: "远期结构性减产 (Back)", x: 750, y: 50, c: "#f43f5e" });
+                info.innerHTML = "【反S型扭曲】7M 定价了新产能集中投产的预期极值，远端则定价了价格暴跌后的产能出清。";
+            }
+        }
+
+        function runRecover() {
+            if (currentMode === 'NONE') return;
+            info.innerHTML = "【修复】1. 套利者锁定 7M 异常价差 ➔ 2. 跨期流动性填补断层 ➔ 3. 结构重归平缓。";
+            if (currentMode === 'BC') tar = [200, 205, 210, 215, 220, 215, 210, 205];
+            else tar = [260, 255, 250, 245, 240, 235, 230, 225];
+            timers.push(setTimeout(function () {
+                tar = [250, 240, 230, 220, 210, 200, 190, 180];
+                tags = [{ s: "✓ 无套利区间已恢复", x: 400, y: 280, c: "#00ffcc" }];
+                currentMode = 'NONE';
+            }, 3000));
+        }
+
+        function runFin(isUp) {
+            reset();
+            var off = isUp ? -80 : 80;
+            for (var i = 0; i < 8; i++) tar[i] = initial[i] + off;
+            info.innerHTML = isUp ? "【通胀/加息】根据定价公式 F = S * e^(r*t)，无风险利率 r 升高将拉升远期斜率。" : "【流动性收缩】基准利率下行或整体需求萎缩，导致全曲线估值中枢平行下移。";
+        }
+
+        render();
+    </script>
+</body>
+
+</html>
